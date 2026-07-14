@@ -1,0 +1,39 @@
+# Memory Framework Evaluation Config
+# Sprint 1 — locked configuration per Constitution Principle VII
+#
+# Usage: engine = MemoryEngine.from_yaml("configs/memory-framework.yaml")
+
+# LLM Provider (DashScope / Alibaba Cloud)
+llm_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+API_KEY: ${MEMORY_FRAMEWORK_API_KEY}
+llm_model: qwen3.6-35b-a3b          # Step1 extraction (locked)
+llm_extract_model: qwen3.6-35b-a3b  # Step1 extraction (explicit)
+llm_short_relation_model: qwen3-max # Relation judgment (weaker, locked)
+llm_long_merge_model: qwen3-max     # Long-term merge (weaker, locked)
+llm_profile_merge_model: qwen3-max  # Profile merge (weaker, locked)
+llm_fallback_model: qwen3-max
+llm_enable_thinking: false
+llm_structured_output_mode: auto
+
+# Embedding Provider
+embedding_model_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+embedding_model: text-embedding-3-small
+
+# Redis (Vector + Index Store)
+vector_database: redis
+vector_database_port: localhost:6379
+
+# PostgreSQL (Evidence, Raw Batch, Profile Store)
+formal_database: postgres
+formal_database_port: localhost:5432
+DB_URL: postgresql://admin:admin123@localhost:5432/stwk
+
+# Evaluation Settings
+strict_topic_validation: false       # Soft validation for Tier 1 breadth
+topic_min_score: 0.3                 # Topic centroid threshold
+retrieval_hot_min: 0.1
+retrieval_hot_max: 2.0
+retrieval_entity_boost_per_match: 0.2
+retrieval_entity_boost_max: 0.2
+retrieval_keyword_weight: 0.25
+archive_hot_threshold: 0.05

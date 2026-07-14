@@ -47,6 +47,7 @@ from tqdm import tqdm
 
 from benchmarks.common.llm_client import LLMClient
 from benchmarks.common.mem0_client import Mem0Client, format_search_results
+from benchmarks.common.memory_framework_client import MemoryFrameworkClient
 from benchmarks.common.metrics import compute_kendall_tau_b, compute_overall_metrics
 from benchmarks.common.schema import (
     CutoffResult,
@@ -957,6 +958,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rpm", type=int, default=200, help="Requests per minute for LLM")
     parser.add_argument("--backend", default="oss", choices=["oss", "cloud"],
                         help="Mem0 backend: 'oss' for self-hosted server (default), 'cloud' for api.mem0.ai")
+    parser.add_argument("--technique", default="mem0", choices=["mem0", "memory-framework"],
+                        help="Memory technique: 'mem0' (default) or 'memory-framework'")
+    parser.add_argument("--framework-config", default="configs/memory-framework.yaml",
+                        help="Path to Memory Framework config YAML (only with --technique memory-framework)")
     parser.add_argument("--mem0-host", default=None,
                         help="Mem0 server URL")
     parser.add_argument("--mem0-api-key", default=None,
@@ -1020,13 +1025,23 @@ async def async_main() -> None:
     dataset = download_dataset(chat_sizes, cache_dir, logger)
 
     # Init clients
-    backend = os.getenv("MEM0_BACKEND", args.backend)
-    mem0 = Mem0Client(
-        mode=backend,
-        host=args.mem0_host,
-        api_key=args.mem0_api_key if backend == "cloud" else None,
-        rpm=args.rpm,
-    )
+    if args.technique == "memory-framework":
+        import sys
+        from pathlib import Path as _Path
+        _repo_root = _Path(__file__).resolve().parents[2]
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+        from memory_framework import MemoryEngine
+        engine = MemoryEngine.from_yaml(args.framework_config)
+        mem0 = MemoryFrameworkClient(engine=engine)
+    else:
+        backend = os.getenv("MEM0_BACKEND", args.backend)
+        mem0 = Mem0Client(
+            mode=backend,
+            host=args.mem0_host,
+            api_key=args.mem0_api_key if backend == "cloud" else None,
+            rpm=args.rpm,
+        )
     answerer = LLMClient(
         model=args.answerer_model, provider=args.provider, rpm=args.rpm
     )

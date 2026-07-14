@@ -1,0 +1,8 @@
+# Ablation Config: No Entity Boost
+# Overrides baseline by zeroing entity boost coefficients,
+# causing retrieval scoring to rely solely on vector similarity + keyword signals.
+#
+# Expected signal: multi-hop / entity-heavy QA Recall ↓
+
+retrieval_entity_boost_per_match: 0.0
+retrieval_entity_boost_max: 0.0

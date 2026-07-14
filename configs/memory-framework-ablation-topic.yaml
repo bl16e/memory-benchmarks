@@ -1,0 +1,7 @@
+# Ablation Config: No Topic Centroid
+# Overrides baseline by setting topic_min_score to 0.0,
+# causing ALL retrievals to fall back to global KNN (no topic pre-filtering).
+#
+# Expected signal: search latency ↑, multi-topic QA Recall ↓
+
+topic_min_score: 0.0
