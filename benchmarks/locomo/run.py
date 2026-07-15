@@ -86,7 +86,7 @@ load_dotenv(override=True)
 DATASET_URL = "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
 DEFAULT_DATASET_DIR = "datasets/locomo"
 DEFAULT_DATASET_FILE = "locomo10.json"
-CHUNK_SIZE = 1  # turns per ingestion chunk
+CHUNK_SIZE = 10  # small batch for extraction quality (~5-10 turns per add)
 
 
 # ===============================================================================
@@ -183,8 +183,7 @@ def session_to_chunks(turns: list[dict], speaker_a: str, speaker_b: str) -> list
             text = f"{text} {photo_tag}" if text else photo_tag
         if not text:
             continue
-        role = "user" if speaker == speaker_a else "assistant"
-        messages.append({"role": role, "content": f"{speaker}: {text}"})
+        messages.append({"role": speaker, "content": text})
 
     chunks = []
     for i in range(0, len(messages), CHUNK_SIZE):
@@ -605,7 +604,7 @@ def locomo_predict_outputs_complete(
             missing.append(qid)
             continue
         try:
-            data = json.loads(Path(path).read_text())
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             missing.append(f"{qid} (unreadable)")
             continue
@@ -684,6 +683,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--judge-model", default="gpt-5", help="Model for judging")
     parser.add_argument("--provider", default="openai", help="LLM provider (openai, anthropic, azure)")
     parser.add_argument("--judge-provider", default=None, help="Judge provider (defaults to --provider)")
+    parser.add_argument("--llm-base-url", default=None, help="Custom base URL for answerer/judge LLM (e.g. DashScope)")
+    parser.add_argument("--llm-api-key", default=None, help="API key for answerer/judge LLM")
     parser.add_argument("--conversations", default="0,1,2,3,4,5,6,7,8,9", help="Comma-separated conversation indices")
     parser.add_argument("--top-k", type=int, default=200, help="Number of search results to retrieve")
     parser.add_argument("--top-k-cutoffs", default="10,20,50,200", help="Comma-separated cutoffs for evaluation")
@@ -759,9 +760,11 @@ async def async_main() -> None:
         evidence_lookup = load_evidence_lookup(dataset_path)
         print(f"  Evidence lookup: {len(evidence_lookup)} entries")
 
-    answerer = LLMClient(model=args.answerer_model, provider=args.provider, rpm=args.rpm)
+    answerer = LLMClient(model=args.answerer_model, provider=args.provider, rpm=args.rpm,
+                         base_url=args.llm_base_url, api_key=args.llm_api_key)
     judge_provider = args.judge_provider or args.provider
-    judge_llm = LLMClient(model=args.judge_model, provider=judge_provider, rpm=args.rpm)
+    judge_llm = LLMClient(model=args.judge_model, provider=judge_provider, rpm=args.rpm,
+                          base_url=args.llm_base_url, api_key=args.llm_api_key)
 
     if args.evaluate_only:
         expected_items = expected_locomo_question_items(
@@ -785,7 +788,7 @@ async def async_main() -> None:
 
         async def judge_one(qid: str, conv_idx: int, qi: int, qa: dict) -> None:
             path = os.path.join(output_dir, f"{qid}.json")
-            data = json.loads(Path(path).read_text())
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
             if data.get("cutoff_results") and not args.rejudge:
                 return
             async with sem:
@@ -800,7 +803,7 @@ async def async_main() -> None:
         ])
 
         all_evaluations = [
-            json.loads(Path(os.path.join(output_dir, f"{qid}.json")).read_text())
+            json.loads(Path(os.path.join(output_dir, f"{qid}.json")).read_text(encoding="utf-8"))
             for qid, _, _, _ in expected_items
         ]
         metrics = compute_locomo_metrics(all_evaluations, cutoffs)
@@ -834,11 +837,6 @@ async def async_main() -> None:
 
     # Init memory client (not used for --evaluate-only)
     if args.technique == "memory-framework":
-        import sys
-        from pathlib import Path as _Path
-        _repo_root = _Path(__file__).resolve().parents[2]
-        if str(_repo_root) not in sys.path:
-            sys.path.insert(0, str(_repo_root))
         from memory_framework import MemoryEngine
         engine = MemoryEngine.from_yaml(args.framework_config)
         mem0 = MemoryFrameworkClient(engine=engine)
@@ -860,7 +858,7 @@ async def async_main() -> None:
             if p.name.startswith("_"):
                 continue
             try:
-                data = json.loads(p.read_text())
+                data = json.loads(p.read_text(encoding="utf-8"))
                 if data.get("category") in categories:
                     all_evaluations.append(data)
             except (json.JSONDecodeError, KeyError):

@@ -849,7 +849,7 @@ def longmemeval_predict_outputs_complete(
             missing.append(qid)
             continue
         try:
-            data = json.loads(Path(path).read_text())
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             missing.append(f"{qid} (unreadable)")
             continue
@@ -956,6 +956,8 @@ def parse_args() -> argparse.Namespace:
         "--judge-provider", default=None,
         help="Judge provider (defaults to --provider)",
     )
+    parser.add_argument("--llm-base-url", default=None, help="Custom base URL for answerer/judge LLM")
+    parser.add_argument("--llm-api-key", default=None, help="API key for answerer/judge LLM")
     parser.add_argument(
         "--mode", default="answerer", choices=["retrieval", "answerer"],
         help="Evaluation mode: retrieval (judge memories) or answerer (generate+judge)",
@@ -1123,10 +1125,12 @@ async def async_main() -> None:
 
     answerer = LLMClient(
         model=args.answerer_model, provider=args.provider, rpm=args.rpm,
+        base_url=args.llm_base_url, api_key=args.llm_api_key,
     )
     judge_provider = args.judge_provider or args.provider
     judge_llm = LLMClient(
         model=args.judge_model, provider=judge_provider, rpm=args.rpm,
+        base_url=args.llm_base_url, api_key=args.llm_api_key,
     )
 
     if args.evaluate_only:
@@ -1175,7 +1179,7 @@ async def async_main() -> None:
         async def judge_one(question: dict) -> None:
             qid = question["question_id"]
             path = os.path.join(output_dir, f"{qid}.json")
-            data = json.loads(Path(path).read_text())
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
             if data.get("cutoff_results") and not args.rejudge:
                 async with progress_lock:
                     update_progress_postfix(data)
@@ -1201,7 +1205,7 @@ async def async_main() -> None:
         pbar.close()
 
         all_evaluations = [
-            json.loads(Path(os.path.join(output_dir, f"{qid}.json")).read_text())
+            json.loads(Path(os.path.join(output_dir, f"{qid}.json")).read_text(encoding="utf-8"))
             for qid in expected_ids
         ]
         metrics = compute_longmemeval_metrics(all_evaluations, cutoffs)
@@ -1240,11 +1244,6 @@ async def async_main() -> None:
         return
 
     if args.technique == "memory-framework":
-        import sys
-        from pathlib import Path as _Path
-        _repo_root = _Path(__file__).resolve().parents[2]
-        if str(_repo_root) not in sys.path:
-            sys.path.insert(0, str(_repo_root))
         from memory_framework import MemoryEngine
         engine = MemoryEngine.from_yaml(args.framework_config)
         mem0 = MemoryFrameworkClient(engine=engine)
@@ -1266,7 +1265,7 @@ async def async_main() -> None:
             if p.name.startswith("_"):
                 continue
             try:
-                data = json.loads(p.read_text())
+                data = json.loads(p.read_text(encoding="utf-8"))
                 if data.get("question_type"):
                     all_evaluations.append(data)
             except (json.JSONDecodeError, KeyError):

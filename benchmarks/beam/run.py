@@ -907,6 +907,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--judge-provider", default=None, help="Judge provider (defaults to --provider)"
     )
+    parser.add_argument("--llm-base-url", default=None, help="Custom base URL for answerer/judge LLM")
+    parser.add_argument("--llm-api-key", default=None, help="API key for answerer/judge LLM")
     parser.add_argument(
         "--chat-sizes",
         default="100K",
@@ -1026,11 +1028,6 @@ async def async_main() -> None:
 
     # Init clients
     if args.technique == "memory-framework":
-        import sys
-        from pathlib import Path as _Path
-        _repo_root = _Path(__file__).resolve().parents[2]
-        if str(_repo_root) not in sys.path:
-            sys.path.insert(0, str(_repo_root))
         from memory_framework import MemoryEngine
         engine = MemoryEngine.from_yaml(args.framework_config)
         mem0 = MemoryFrameworkClient(engine=engine)
@@ -1043,11 +1040,13 @@ async def async_main() -> None:
             rpm=args.rpm,
         )
     answerer = LLMClient(
-        model=args.answerer_model, provider=args.provider, rpm=args.rpm
+        model=args.answerer_model, provider=args.provider, rpm=args.rpm,
+        base_url=args.llm_base_url, api_key=args.llm_api_key,
     )
     judge_provider = args.judge_provider or args.provider
     judge_llm = LLMClient(
-        model=args.judge_model, provider=judge_provider, rpm=args.rpm
+        model=args.judge_model, provider=judge_provider, rpm=args.rpm,
+        base_url=args.llm_base_url, api_key=args.llm_api_key,
     )
     shutdown = GracefulShutdown()
 
@@ -1059,7 +1058,7 @@ async def async_main() -> None:
             if p.name.startswith("_"):
                 continue
             try:
-                data = json.loads(p.read_text())
+                data = json.loads(p.read_text(encoding="utf-8"))
                 if data.get("question_id"):
                     all_evaluations.append(data)
             except (json.JSONDecodeError, KeyError):
