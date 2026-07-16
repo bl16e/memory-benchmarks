@@ -5,15 +5,17 @@
 # LLM Provider (DashScope / Alibaba Cloud)
 llm_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
 embedding_model_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-API_KEY: 
+API_KEY: ${API_KEY}
 llm_model: qwen3.7-max
-llm_extract_model: qwen3.7-max
+llm_extract_model: qwen3-max
 llm_short_relation_model: qwen-max
 llm_long_merge_model: qwen-max
 llm_profile_merge_model: qwen-max
 llm_fallback_model: qwen3.7-max
 llm_enable_thinking: false
-
+llm_structured_output_mode: auto
+profile_enabled: false
+add_batch_extract_max_attempts: 3
 # Embedding
 embedding_model: text-embedding-v4
 
@@ -35,3 +37,5 @@ retrieval_entity_boost_per_match: 0.2
 retrieval_entity_boost_max: 0.2
 retrieval_keyword_weight: 0.25
 archive_hot_threshold: 0.05
+retrieval_mmr_lambda: 0.7
+retrieval_entity_admit_cap: 5

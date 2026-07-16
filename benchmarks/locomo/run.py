@@ -86,7 +86,7 @@ load_dotenv(override=True)
 DATASET_URL = "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
 DEFAULT_DATASET_DIR = "datasets/locomo"
 DEFAULT_DATASET_FILE = "locomo10.json"
-CHUNK_SIZE = 10  # small batch for extraction quality (~5-10 turns per add)
+CHUNK_SIZE = 5  # small batch for extraction quality (~5-10 turns per add)
 
 
 # ===============================================================================

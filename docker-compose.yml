@@ -26,7 +26,7 @@ services:
       - mem0_history:/app/history
       # Custom config for advanced setups (Azure, Ollama, SageMaker, etc.)
       # Uncomment and point to your config file:
-      # - ./mem0-config.yaml:/app/config.yaml:ro
+      - ./mem0-config.yaml:/app/config.yaml:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

@@ -19,6 +19,7 @@ Endpoints:
 import os
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,7 @@ class AddRequest(BaseModel):
     agent_id: str | None = None
     run_id: str | None = None
     metadata: dict[str, Any] | None = None
+    timestamp: int | None = None
     observation_date: str | None = None
     custom_instructions: str | None = None
 
@@ -205,18 +207,46 @@ def add_memories(req: AddRequest):
     """Add memories extracted from a conversation."""
     mem = _get_memory()
     params: dict[str, Any] = {}
+    metadata = dict(req.metadata or {})
+    observation_iso: str | None = None
     if req.user_id:
         params["user_id"] = req.user_id
     if req.agent_id:
         params["agent_id"] = req.agent_id
     if req.run_id:
         params["run_id"] = req.run_id
-    if req.metadata:
-        params["metadata"] = req.metadata
+    if req.timestamp is not None:
+        observation_iso = datetime.fromtimestamp(int(req.timestamp), tz=timezone.utc).isoformat()
+        metadata.setdefault(
+            "created_at",
+            observation_iso,
+        )
+    elif req.observation_date:
+        try:
+            observation_iso = datetime.strptime(req.observation_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+            metadata.setdefault(
+                "created_at",
+                observation_iso,
+            )
+        except ValueError:
+            logger.warning("Ignoring invalid observation_date: %s", req.observation_date)
+    if metadata:
+        params["metadata"] = metadata
     # observation_date and custom_instructions: pass through only if
     # the installed mem0ai version supports them
+    prompt_parts: list[str] = []
+    if observation_iso:
+        prompt_parts.append(
+            "Temporal grounding override for this add request:\n"
+            f"- The new messages occurred at {observation_iso}.\n"
+            "- Treat that timestamp as the Observation Date for extraction.\n"
+            "- Resolve relative time expressions such as today, yesterday, last week, last month, recently, and next month against that Observation Date only.\n"
+            "- Do not use the wall-clock date or any Current Date shown elsewhere in the prompt to resolve dates from the new messages."
+        )
     if req.custom_instructions:
-        params["prompt"] = req.custom_instructions
+        prompt_parts.append(req.custom_instructions)
+    if prompt_parts:
+        params["prompt"] = "\n\n".join(prompt_parts)
 
     try:
         result = mem.add(req.messages, **params)
@@ -231,14 +261,15 @@ def search_memories(req: SearchRequest):
     """Search memories by semantic similarity + BM25 + entity boost."""
     mem = _get_memory()
     params: dict[str, Any] = {"limit": req.limit}
+    filters: dict[str, Any] = dict(req.filters or {})
     if req.user_id:
-        params["user_id"] = req.user_id
+        filters["user_id"] = req.user_id
     if req.agent_id:
-        params["agent_id"] = req.agent_id
+        filters["agent_id"] = req.agent_id
     if req.run_id:
-        params["run_id"] = req.run_id
-    if req.filters:
-        params["filters"] = req.filters
+        filters["run_id"] = req.run_id
+    if filters:
+        params["filters"] = filters
     if req.rerank:
         params["rerank"] = True
 
