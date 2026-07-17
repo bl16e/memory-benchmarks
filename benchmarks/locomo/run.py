@@ -271,6 +271,7 @@ async def ingest_conversation(
     if resumed_uid and chunks_already_done:
         user_id = resumed_uid
         logger.info("Resuming conversation %d from %d completed chunks", conv_idx, len(chunks_already_done))
+    failed_chunks = load_failed_ingestion_chunks(checkpoint, key, CHUNK_SIZE)
 
     sorted_sessions = get_sorted_sessions(conversation)
     total_chunks = sum(len(session_to_chunks(s, speaker_a, speaker_b)) for _, _, s in sorted_sessions)
@@ -341,26 +342,25 @@ async def ingest_conversation(
 
             if response is not None:
                 total_processed += 1
+                chunks_already_done.add(chunk_key)
+                failed_chunks.discard(chunk_key)
                 if debug_file:
-                    results = response.get("results", [])
-                    if results:
-                        debug_file.write(f"--- Chunk {chunk_idx} (extracted) ---\n")
-                        for mem_item in results:
-                            mem_text = mem_item.get("memory", "")
-                            event_type = mem_item.get("event", "")
-                            debug_file.write(f"  [{event_type}] {mem_text}\n")
-                        debug_file.write("\n")
+                    write_ingestion_response_debug(debug_file, chunk_idx=chunk_idx, response=response)
             else:
                 total_failed += 1
+                failed_chunks.add(chunk_key)
                 logger.warning("Ingestion failed: conv %d %s chunk %d", conv_idx, session_key, chunk_idx)
+                if debug_file:
+                    debug_file.write(f"--- Chunk {chunk_idx} (failed) ---\n")
+                    debug_file.write("  ADD returned no response; chunk left incomplete for resume.\n\n")
 
-            chunks_already_done.add(chunk_key)
             checkpoint.save_progress(key, {
                 "conversation_idx": conv_idx,
                 "user_id": user_id,
                 "run_id": run_id,
                 "chunk_size": CHUNK_SIZE,
-                "completed_chunks": list(chunks_already_done),
+                "completed_chunks": sorted(chunks_already_done),
+                "failed_chunks": sorted(failed_chunks),
             })
             pbar.update(1)
 
@@ -369,16 +369,92 @@ async def ingest_conversation(
         debug_file.write(f"\nSUMMARY: {total_processed}/{total_chunks} OK, {total_failed} failed\n")
         debug_file.close()
 
-    checkpoint.save_complete(key, {
+    complete_payload = {
         "conversation_idx": conv_idx,
         "user_id": user_id,
         "run_id": run_id,
         "chunk_size": CHUNK_SIZE,
         "total_chunks_processed": total_processed,
         "total_chunks_failed": total_failed,
-    })
+        "failed_chunks": sorted(failed_chunks),
+    }
+    if total_failed == 0 and not failed_chunks:
+        checkpoint.save_complete(key, complete_payload)
+    else:
+        checkpoint.save_progress(key, {
+            **complete_payload,
+            "completed_chunks": sorted(chunks_already_done),
+        })
 
     return total_failed == 0, user_id, total_processed
+
+
+def load_failed_ingestion_chunks(checkpoint: IngestionCheckpoint, key: str, chunk_size: int) -> set[str]:
+    path = checkpoint.progress_path(key)
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    if data.get("chunk_size") != chunk_size:
+        return set()
+    return {str(item) for item in data.get("failed_chunks", [])}
+
+
+def write_ingestion_response_debug(debug_file: Any, *, chunk_idx: int, response: dict[str, Any]) -> None:
+    results = response.get("results", []) if isinstance(response, dict) else []
+    if results:
+        debug_file.write(f"--- Chunk {chunk_idx} (extracted) ---\n")
+        source_batch_id = response.get("source_batch_id")
+        if source_batch_id:
+            debug_file.write(f"  Source batch: {source_batch_id}\n")
+        for mem_item in results:
+            mem_text = ingestion_memory_text(mem_item)
+            event_type = str(mem_item.get("event") or mem_item.get("action") or "ADD")
+            memory_id = mem_item.get("id") or mem_item.get("memory_id")
+            suffix = f" (id={memory_id})" if memory_id else ""
+            debug_file.write(f"  [{event_type}] {mem_text}{suffix}\n")
+        write_ingestion_internal_debug(debug_file, response.get("debug") or response.get("internal") or {})
+        debug_file.write("\n")
+
+
+def ingestion_memory_text(mem_item: dict[str, Any]) -> str:
+    for key in ("memory", "text", "content", "canonical_text"):
+        value = mem_item.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return ""
+
+
+def write_ingestion_internal_debug(debug_file: Any, debug: dict[str, Any]) -> None:
+    if not isinstance(debug, dict) or not debug:
+        return
+    for item in debug.get("step1_candidates") or debug.get("extracted_candidates") or []:
+        if isinstance(item, dict):
+            text = ingestion_memory_text(item)
+            kind = item.get("memory_kind")
+            suffix = f" ({kind})" if kind else ""
+            debug_file.write(f"  [step1] {text}{suffix}\n")
+        else:
+            debug_file.write(f"  [step1] {item}\n")
+    for decision in debug.get("relation_decisions") or []:
+        if not isinstance(decision, dict):
+            debug_file.write(f"  [relation] {decision}\n")
+            continue
+        input_id = decision.get("input_id") or decision.get("candidate_id")
+        action = decision.get("primary_action") or decision.get("action")
+        target = decision.get("primary_target_cluster_id") or decision.get("target_cluster_id")
+        target_text = f" target={target}" if target else ""
+        debug_file.write(f"  [relation] input={input_id} action={action}{target_text}\n")
+    for item in debug.get("updated_clusters") or []:
+        if not isinstance(item, dict):
+            debug_file.write(f"  [updated] {item}\n")
+            continue
+        cluster_id = item.get("cluster_id") or item.get("memory_id")
+        previous = item.get("previous_text") or item.get("previous_canonical_text") or ""
+        text = item.get("text") or item.get("canonical_text") or item.get("updated_canonical_text") or ""
+        debug_file.write(f"  [updated] {cluster_id}: {previous} -> {text}\n")
 
 
 # ===============================================================================

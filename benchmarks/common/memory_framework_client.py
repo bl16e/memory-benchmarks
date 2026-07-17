@@ -106,18 +106,28 @@ class MemoryFrameworkClient:
                 observed_at=observed_at,
             )
             # Map AddMemoriesResult → Mem0-compatible response format
-            memories = [
-                {
-                    "memory": "",  # text not exposed via AddMemoriesResult
-                    "event": "ADD",
-                    "id": mid,
-                }
-                for mid in result.accepted_memory_ids
-            ]
+            relation_memories = list(getattr(result.relation_result, "memories", []) or [])
+            text_by_id = {
+                str(item.get("memory_id")): str(item.get("text") or item.get("canonical_text") or "")
+                for item in relation_memories
+                if item.get("memory_id")
+            }
+            memories = []
+            for mid in result.accepted_memory_ids:
+                memory_id = str(mid)
+                memories.append(
+                    {
+                        "memory": text_by_id.get(memory_id, ""),
+                        "event": "ADD",
+                        "id": memory_id,
+                    }
+                )
+            relation_debug = _relation_debug_payload(self._engine, result)
             return {
                 "results": memories,
                 "memory_count": len(memories),
                 "source_batch_id": result.source_batch_id,
+                "debug": relation_debug,
             }
         except Exception as exc:
             logger.warning("ADD failed (user=%s, msgs=%d): %s", user_id, len(messages), str(exc)[:200])
@@ -202,3 +212,30 @@ class MemoryFrameworkClient:
         conversation/question. Implemented as no-op.
         """
         return True
+
+
+def _relation_debug_payload(engine: Any, result: Any) -> dict[str, Any]:
+    relation_result = getattr(result, "relation_result", None)
+    decisions = list(getattr(relation_result, "decisions", []) or [])
+    diagnostics = getattr(getattr(engine, "relation_workflow_stage", None), "last_diagnostics", None)
+    update_operations = list(getattr(diagnostics, "update_operations", []) or [])
+    updated_text_by_cluster_id = {
+        str(decision.get("primary_target_cluster_id") or decision.get("target_cluster_id") or ""): str(
+            decision.get("updated_canonical_text") or decision.get("content") or ""
+        )
+        for decision in decisions
+        if isinstance(decision, dict)
+        and str(decision.get("primary_action") or decision.get("action") or "").upper() == "UPDATE"
+    }
+    return {
+        "relation_status": getattr(relation_result, "status", None),
+        "relation_decisions": decisions,
+        "updated_clusters": [
+            {
+                "cluster_id": str(getattr(item, "cluster_id", "")),
+                "previous_text": str(getattr(item, "previous_canonical_text", "")),
+                "text": updated_text_by_cluster_id.get(str(getattr(item, "cluster_id", "")), ""),
+            }
+            for item in update_operations
+        ],
+    }
